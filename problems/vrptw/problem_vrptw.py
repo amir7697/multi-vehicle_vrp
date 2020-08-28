@@ -37,7 +37,7 @@ class CVRPTW(object):
             ),
             1
         )[:, None, :].repeat(1, vehicle_count, 1)
-        route = torch.zeros(pi.size(0), vehicle_count, pi.size(1), dtype=int)
+        route = torch.zeros(pi.size(0), vehicle_count, pi.size(1), dtype=int, device=demand_with_depot.device)
         for i, way in enumerate(pi):
             cursur = vehicle_count*[0]
             for j, location in enumerate(way):
