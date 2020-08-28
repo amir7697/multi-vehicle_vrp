@@ -79,7 +79,6 @@ def train_epoch(model, optimizer, baseline, lr_scheduler, epoch, val_dataset, pr
     # Put model in train mode!
     model.train()
     set_decode_type(model, "sampling")
-    torch.autograd.set_detect_anomaly(True)
     for batch_id, batch in enumerate(tqdm(training_dataloader, disable=opts.no_progress_bar)):
         train_batch(
             model,

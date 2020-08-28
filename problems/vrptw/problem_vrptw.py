@@ -39,10 +39,9 @@ class CVRPTW(object):
         )[:, None, :].repeat(1, vehicle_count, 1)
         route = torch.zeros(pi.size(0), vehicle_count, pi.size(1), dtype=int, device=demand_with_depot.device)
         for i, way in enumerate(pi):
-            cursur = vehicle_count*[0]
-            for j, location in enumerate(way):
-                route[i, location % vehicle_count, cursur[location % vehicle_count]] = location//vehicle_count
-                cursur[location % vehicle_count] += 1
+            for j in range(vehicle_count):
+                temp = way[way % vehicle_count == j]
+                route[i, j, :temp.size(0)] = temp // vehicle_count
 
         d = demand_with_depot.gather(-1, route)
 
@@ -84,16 +83,12 @@ class CVRPTW(object):
             ), -1)
 
         arrival_times = torch.zeros_like(route)
-
-        for i in range(route.size(0)):
-            for j in range(route.size(1)):
-                arrival_times[i, j, 0] = start_times[i, j, 0]
-                for k in range(1, route.size(2)):
-                    if route[i, j, k-1] == 0:
-                        arrival_times[i, j, k] = start_times[i, j, k]
-                    else:
-                        arrival_times[i, j, k] = max(start_times[i, j, k-1], arrival_times[i, j, k-1]) + \
-                                                     eta_matrix[i, j, k]
+        for j in range(route.size(1)):
+            arrival_times[:, j, 0] = start_times[:, j, 0]
+            for k in range(1, route.size(2)):
+                arrival_times[:, j, k] = start_times[:, j, k] * ((route[:, j, k - 1] == 0).float()) + \
+                    (torch.max(start_times[:, j, k - 1].float(), arrival_times[:, j, k - 1].float()) +
+                     eta_matrix[:, j, k])*((route[:, j, k - 1] != 0).float())
 
         # Length is distance (L2-norm of difference) of each next location to its prev and of first and last to depot
         distance_cost = ((locations[:, :, 1:] - locations[:, :, :-1]).norm(p=2, dim=-1).sum(-1)\
@@ -180,19 +175,17 @@ class VRPTWDataset(Dataset):
 
             for sample in self.data:
                 customer_eta_to_depot = self.calculate_eta(sample['loc'], sample['depot'].view(1, 2).expand(size, 2))
-                customer_horizon_start_time = (sample['depotStartTime'] + customer_eta_to_depot + 1).numpy()
-                customer_horizon_finish_time = sample['depotFinishTime'].numpy()[0] - customer_horizon_start_time
+                customer_horizon_start_time = sample['depotStartTime'] + customer_eta_to_depot + 1
+                customer_horizon_finish_time = sample['depotFinishTime'] - customer_horizon_start_time
 
                 noise = torch.abs(torch.randn(size))
                 duration_threshold = torch.FloatTensor([0.01])
                 epsilon = torch.max(noise, duration_threshold.expand_as(noise))
 
-                sample['timeWindowStart'] = torch.tensor(
-                    [np.random.uniform(customer_horizon_start_time[i], customer_horizon_finish_time[i]) for
-                     i in range(size)])
-
+                sample['timeWindowStart'] = (customer_horizon_finish_time - customer_horizon_start_time) * \
+                    torch.rand(customer_horizon_finish_time.size()) + customer_horizon_start_time
                 sample['timeWindowFinish'] = torch.min((sample['timeWindowStart'] + 300*epsilon),
-                                                       torch.tensor(customer_horizon_finish_time))
+                                                       customer_horizon_finish_time)
 
         self.size = len(self.data)
 

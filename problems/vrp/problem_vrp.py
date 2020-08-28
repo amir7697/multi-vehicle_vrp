@@ -35,10 +35,9 @@ class CVRP(object):
 
         route = torch.zeros(pi.size(0), vehicle_count, pi.size(1), dtype=int, device=demand_with_depot.device)
         for i, way in enumerate(pi):
-            cursur = vehicle_count * [0]
-            for j, location in enumerate(way):
-                route[i, location % vehicle_count, cursur[location % vehicle_count]] = location // vehicle_count
-                cursur[location % vehicle_count] += 1
+            for j in range(vehicle_count):
+                temp = way[way % vehicle_count == j]
+                route[i, j, :temp.size(0)] = temp // vehicle_count
 
         d = demand_with_depot.gather(-1, route)
 
