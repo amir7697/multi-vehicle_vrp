@@ -27,6 +27,15 @@ def get_options(args=None):
     parser.add_argument('--normalization', default='batch', help="Normalization type, 'batch' (default) or 'instance'")
 
     # Training
+    parser.add_argument('--bl_alpha', type=float, default=0.05,
+                        help='Significance in the t-test for updating rollout baseline')
+    parser.add_argument('--bl_warmup_epochs', type=int, default=None,
+                        help='Number of epochs to warmup the baseline, default None means 1 for rollout (exponential '
+                             'used for warmup phase), 0 otherwise. Can only be used with rollout baseline.')
+    parser.add_argument('--exp_beta', type=float, default=0.8,
+                        help='Exponential moving average baseline decay (default 0.8)')
+    parser.add_argument('--baseline', default=None,
+                        help="Baseline to use: 'rollout', 'critic' or 'exponential'. Defaults to no baseline.")
     parser.add_argument('--lr_model', type=float, default=1e-4, help="Set the learning rate for the actor network")
     parser.add_argument('--lr_critic', type=float, default=1e-4, help="Set the learning rate for the critic network")
     parser.add_argument('--lr_decay', type=float, default=1.0, help='Learning rate decay per epoch')
@@ -77,5 +86,7 @@ def get_options(args=None):
         'delay': opts.delay_cost,
         'early': opts.early_cost
     }
+    if opts.bl_warmup_epochs is None:
+        opts.bl_warmup_epochs = 1 if opts.baseline == 'rollout' else 0
     assert opts.epoch_size % opts.batch_size == 0, "Epoch size must be integer multiple of batch size!"
     return opts

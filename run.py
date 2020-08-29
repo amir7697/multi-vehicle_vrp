@@ -11,7 +11,7 @@ from tensorboard_logger import Logger as TbLogger
 
 from options import get_options
 from train import train_epoch, validate, get_inner_model
-from reinforce_baselines import NoBaseline
+from reinforce_baselines import NoBaseline, RolloutBaseline, WarmupBaseline
 from nets.attention_model import AttentionModel
 from util import torch_load_cpu, load_problem
 
@@ -71,7 +71,18 @@ def run(opts):
     model_ = get_inner_model(model)
     model_.load_state_dict({**model_.state_dict(), **load_data.get('model', {})})
 
-    baseline = NoBaseline()
+    if opts.baseline == 'rollout':
+        baseline = RolloutBaseline(model, problem, opts)
+    else:
+        assert opts.baseline is None, "Unknown baseline: {}".format(opts.baseline)
+        baseline = NoBaseline()
+
+    if opts.bl_warmup_epochs > 0:
+        baseline = WarmupBaseline(baseline, opts.bl_warmup_epochs, warmup_exp_beta=opts.exp_beta)
+
+    # Load baseline from data, make sure script is called with same type of baseline
+    if 'baseline' in load_data:
+        baseline.load_state_dict(load_data['baseline'])
 
     # Initialize optimizer
     optimizer = optim.Adam(
