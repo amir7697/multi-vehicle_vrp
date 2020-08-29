@@ -159,33 +159,38 @@ class VRPTWDataset(Dataset):
             # todo: add service time
             SERVICE_TIME = 0
             TIME_HORIZON = 1000
+            locs = torch.FloatTensor(num_samples, size, 2).uniform_(0, 1)
+            demand = (torch.FloatTensor(num_samples, size).uniform_(0, 9).int() + 1).float() / CAPACITIES[size]
+            depot = torch.FloatTensor(num_samples, 2).uniform_(0, 1)
+            depot_start_time = torch.zeros(num_samples, 1)
+            depot_finish_time = TIME_HORIZON*torch.ones(num_samples, 1)
+            service_time = torch.cat((torch.zeros(num_samples, 1), SERVICE_TIME*torch.ones(num_samples, size)), -1)
+
+            customer_eta_to_depot = self.calculate_eta(locs, depot.view(num_samples, 1, 2).expand(num_samples, size, 2))
+            customer_horizon_start_time = depot_start_time.view(num_samples, 1).repeat(1, size) + customer_eta_to_depot + 1
+            customer_horizon_finish_time = depot_finish_time.view(num_samples, 1).repeat(1, size) - customer_eta_to_depot
+
+            noise = torch.abs(torch.randn(num_samples, size))
+            duration_threshold = torch.FloatTensor([0.01])
+            epsilon = torch.max(noise, duration_threshold.expand_as(noise))
+
+            time_window_start_time = (customer_horizon_finish_time - customer_horizon_start_time)*\
+                torch.rand(num_samples, size) + customer_horizon_start_time
+            time_window_finish_time = torch.min(time_window_start_time + 300*epsilon, customer_horizon_finish_time)
 
             self.data = [
                 {
-                    # 'loc': (torch.randint(0, 100, (size, 2)).float())/100,
-                    'loc': torch.rand((size, 2)),
-                    'demand': (torch.FloatTensor(size).uniform_(0, 9).int() + 1).float() / CAPACITIES[size],
-                    'depot': torch.rand((2, )),
-                    'depotStartTime': torch.zeros(1),
-                    'depotFinishTime': TIME_HORIZON * torch.ones(1),
-                    'serviceTime': torch.cat((torch.zeros(1), SERVICE_TIME * torch.ones(size)), -1)
+                    'loc': locs[i],
+                    'demand': demand[i],
+                    'depot': depot[i],
+                    'depotStartTime': depot_start_time[i],
+                    'depotFinishTime': depot_finish_time[i],
+                    'serviceTime': service_time[i],
+                    'timeWindowStart': time_window_start_time[i],
+                    'timeWindowFinish': time_window_finish_time[i]
                 }
                 for i in range(num_samples)
             ]
-
-            for sample in self.data:
-                customer_eta_to_depot = self.calculate_eta(sample['loc'], sample['depot'].view(1, 2).expand(size, 2))
-                customer_horizon_start_time = sample['depotStartTime'] + customer_eta_to_depot + 1
-                customer_horizon_finish_time = sample['depotFinishTime'] - customer_horizon_start_time
-
-                noise = torch.abs(torch.randn(size))
-                duration_threshold = torch.FloatTensor([0.01])
-                epsilon = torch.max(noise, duration_threshold.expand_as(noise))
-
-                sample['timeWindowStart'] = (customer_horizon_finish_time - customer_horizon_start_time) * \
-                    torch.rand(customer_horizon_finish_time.size()) + customer_horizon_start_time
-                sample['timeWindowFinish'] = torch.min((sample['timeWindowStart'] + 300*epsilon),
-                                                       customer_horizon_finish_time)
 
         self.size = len(self.data)
 
