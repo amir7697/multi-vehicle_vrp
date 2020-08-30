@@ -89,7 +89,7 @@ class StateCVRP(NamedTuple):
         assert self.i.size(0) == 1, "Can only update if state represents single step"
 
         # Update the state
-        vehicle_index = selected % vehicle_count
+        vehicle_index = (selected % vehicle_count)[:, None]
         selected_node = selected // vehicle_count
         selected = selected_node[:, None]  # Add dimension for step
         prev_a = selected
@@ -126,17 +126,10 @@ class StateCVRP(NamedTuple):
             for i in range(vehicle_count):
                 visited_ = mask_long_scatter(visited_, (vehicle_count * (prev_a - 1) + i).clamp(min=-1))
 
-        prev_a_tmp = self.prev_a
-        prev_a_tmp[self.ids, 0, vehicle_index] = prev_a
-
-        used_capacity_tmp = self.used_capacity
-        used_capacity_tmp[self.ids, 0, vehicle_index] = used_capacity
-
-        lengths_tmp = self.lengths
-        lengths_tmp[self.ids, 0, vehicle_index] = lengths
-
-        cur_coord_tmp = self.cur_coord
-        cur_coord_tmp[self.ids, 0, vehicle_index] = cur_coord
+        prev_a_tmp = self.prev_a.scatter(-1, vehicle_index[:, :, None], prev_a[:, None, :])
+        used_capacity_tmp = self.used_capacity.scatter(-1, vehicle_index[:, :, None], used_capacity[:, None, :])
+        lengths_tmp = self.lengths.scatter(-1, vehicle_index[:, :, None], lengths[:, None, :])
+        cur_coord_tmp = self.cur_coord.scatter(-2, vehicle_index[:, :, None, None], cur_coord[:, :, None, :])
 
         return self._replace(
             prev_a=prev_a_tmp, used_capacity=used_capacity_tmp, visited_=visited_,

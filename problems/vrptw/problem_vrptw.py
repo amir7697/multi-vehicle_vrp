@@ -44,9 +44,8 @@ class CVRPTW(object):
                 route[i, j, :temp.size(0)] = temp // vehicle_count
 
         d = demand_with_depot.gather(-1, route)
-
-        used_cap = torch.zeros_like(dataset['demand'][:, 0])
         for j in range(vehicle_count):
+            used_cap = torch.zeros_like(dataset['demand'][:, 0])
             for i in range(route.size(2)):
                 used_cap += d[:, j, i]  # This will reset/make capacity negative if i == 0, e.g. depot visited
                 # Cannot use less than 0

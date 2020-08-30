@@ -109,7 +109,7 @@ class StateCVRPTW(NamedTuple):
 
         assert self.i.size(0) == 1, "Can only update if state represents single step"
         # Update the state
-        vehicle_index = selected % vehicle_count
+        vehicle_index = (selected % vehicle_count)[:, None]
         selected_node = selected // vehicle_count
         selected = selected_node[:, None]  # Add dimension for step
         prev_a = selected
@@ -118,7 +118,7 @@ class StateCVRPTW(NamedTuple):
         # Add the length
         cur_coord = self.coords[self.ids, selected]
         arrival_time = (
-                (self.cur_time[self.ids, vehicle_index] +
+                (self.cur_time.gather(-1, vehicle_index) +
                  self.TIME_SCALE*(cur_coord - self.cur_coord[self.ids, 0, vehicle_index]).norm(p=2, dim=-1)) *\
                 (self.prev_a[self.ids, 0, vehicle_index] != 0) +
                 (self.time_window_start[self.ids, selected])*(self.prev_a[self.ids, 0, vehicle_index] == 0)
@@ -144,7 +144,6 @@ class StateCVRPTW(NamedTuple):
         # Increase capacity if depot is not visited, otherwise set to 0
         #used_capacity = torch.where(selected == 0, 0, self.used_capacity + selected_demand)
         used_capacity = (self.used_capacity[self.ids, 0, vehicle_index] + selected_demand) * (prev_a != 0).float()
-        # print('used capacity: {}'.format(used_capacity))
         if self.visited_.dtype == torch.uint8:
             # Note: here we do not subtract one as we have to scatter so the first column allows scattering depot
             # Add one dimension since we write a single value
@@ -159,29 +158,14 @@ class StateCVRPTW(NamedTuple):
             for i in range(vehicle_count):
                 visited_ = mask_long_scatter(visited_, (vehicle_count*(prev_a - 1) + i).clamp(min=-1))
 
-        prev_a_tmp = self.prev_a
-        prev_a_tmp[self.ids, 0, vehicle_index] = prev_a
-
-        used_capacity_tmp = self.used_capacity
-        used_capacity_tmp[self.ids, 0, vehicle_index] = used_capacity
-
-        lengths_tmp = self.lengths
-        lengths_tmp[self.ids, 0, vehicle_index] = lengths
-
-        cur_coord_tmp = self.cur_coord
-        cur_coord_tmp[self.ids, 0, vehicle_index] = cur_coord
-
-        total_service_times_tmp = self.total_service_times
-        total_service_times_tmp[self.ids, 0, vehicle_index] = total_service_times
-
-        total_early_times_tmp = self.total_early_times
-        total_early_times_tmp[self.ids, 0, vehicle_index] = total_early_times
-
-        total_delay_times_tmp = self.total_delay_times
-        total_delay_times_tmp[self.ids, 0, vehicle_index] = total_delay_times
-
-        cur_time_tmp = self.cur_time
-        cur_time_tmp[self.ids, vehicle_index] = cur_time
+        prev_a_tmp = self.prev_a.scatter(-1, vehicle_index[:, :, None], prev_a[:, None, :])
+        used_capacity_tmp = self.used_capacity.scatter(-1, vehicle_index[:, :, None], used_capacity[:, None, :])
+        lengths_tmp = self.lengths.scatter(-1, vehicle_index[:, :, None], lengths[:, None, :])
+        cur_coord_tmp = self.cur_coord.scatter(-2, vehicle_index[:, :, None, None], cur_coord[:, :, None, :])
+        total_service_times_tmp = self.total_service_times.scatter(-1, vehicle_index[:, :, None], total_service_times[:, None, :])
+        total_early_times_tmp = self.total_early_times.scatter(-1, vehicle_index[:, :, None], total_early_times[:, None, :])
+        total_delay_times_tmp = self.total_delay_times.scatter(-1, vehicle_index[:, :, None], total_delay_times[:, None, :])
+        cur_time_tmp = self.cur_time.scatter(-1, vehicle_index, cur_time)
 
         return self._replace(
             prev_a=prev_a_tmp, used_capacity=used_capacity_tmp, visited_=visited_,

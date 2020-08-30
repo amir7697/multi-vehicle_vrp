@@ -10,7 +10,7 @@ def get_options(args=None):
 
     # Data
     parser.add_argument('--problem', default='vrp', help="The problem to solve, default 'vrp'")
-    parser.add_argument('--vehicle_count', default=1, help="number of vehicle to service locations'")
+    parser.add_argument('--vehicle_count', type=int, default=1, help="number of vehicle to service locations'")
     parser.add_argument('--graph_size', type=int, default=20, help="The size of the problem graph")
     parser.add_argument('--batch_size', type=int, default=16, help='Number of instances per batch during training')
     parser.add_argument('--epoch_size', type=int, default=128, help='Number of instances per epoch during training')
