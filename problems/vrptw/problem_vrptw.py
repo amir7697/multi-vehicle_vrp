@@ -44,13 +44,6 @@ class CVRPTW(object):
                 route[i, j, :temp.size(0)] = temp // vehicle_count
 
         d = demand_with_depot.gather(-1, route)
-        for j in range(vehicle_count):
-            used_cap = torch.zeros_like(dataset['demand'][:, 0])
-            for i in range(route.size(2)):
-                used_cap += d[:, j, i]  # This will reset/make capacity negative if i == 0, e.g. depot visited
-                # Cannot use less than 0
-                used_cap[used_cap < 0] = 0
-                assert (used_cap <= CVRPTW.VEHICLE_CAPACITY + 1e-5).all(), "Used more than capacity"
 
         # Gather dataset in order of tour
         loc_with_depot = (
@@ -83,11 +76,18 @@ class CVRPTW(object):
 
         arrival_times = torch.zeros_like(route)
         for j in range(route.size(1)):
-            arrival_times[:, j, 0] = start_times[:, j, 0]
-            for k in range(1, route.size(2)):
-                arrival_times[:, j, k] = start_times[:, j, k] * ((route[:, j, k - 1] == 0).float()) + \
-                    (torch.max(start_times[:, j, k - 1].float(), arrival_times[:, j, k - 1].float()) +
-                     eta_matrix[:, j, k])*((route[:, j, k - 1] != 0).float())
+            used_cap = torch.zeros_like(dataset['demand'][:, 0])
+            for k in range(route.size(2)):
+                used_cap += d[:, j, k]  # This will reset/make capacity negative if i == 0, e.g. depot visited
+                # Cannot use less than 0
+                used_cap[used_cap < 0] = 0
+                assert (used_cap <= CVRPTW.VEHICLE_CAPACITY + 1e-5).all(), "Used more than capacity"
+                if k == 0:
+                    arrival_times[:, j, k] = start_times[:, j, k]
+                else:
+                    arrival_times[:, j, k] = start_times[:, j, k] * ((route[:, j, k - 1] == 0).float()) + \
+                        (torch.max(start_times[:, j, k - 1].float(), arrival_times[:, j, k - 1].float()) +
+                         eta_matrix[:, j, k])*((route[:, j, k - 1] != 0).float())
 
         # Length is distance (L2-norm of difference) of each next location to its prev and of first and last to depot
         distance_cost = ((locations[:, :, 1:] - locations[:, :, :-1]).norm(p=2, dim=-1).sum(-1)\
