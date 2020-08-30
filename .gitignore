@@ -3,3 +3,5 @@ __pycache__/
 data/
 outputs/
 logs/
+evaluation/trained_models
+evaluation/.ipynb_checkpoints
