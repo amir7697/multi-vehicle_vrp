@@ -75,11 +75,16 @@ class AttentionModel(nn.Module):
         self.shrink_size = shrink_size
         self.vehicle_count = vehicle_count
 
-        # Embedding of last node + remaining_capacity per vehicle
-        step_context_dim = (embedding_dim + 1) * self.vehicle_count
-        node_dim = 3  # x, y, demand
+        if self.is_vrp:
+            node_dim = 3 # x, y, demand
+            # Embedding of last node + remaining_capacity  per vehicle
+            step_context_dim = (embedding_dim + 1) * self.vehicle_count
+        elif self.is_vrptw:
+            node_dim = 5 # x, y, demand, start time, finish time
+            # Embedding of last node + remaining_capacity + current time per vehicle
+            step_context_dim = (embedding_dim + 2) * self.vehicle_count
 
-        # Special embedding projection for depot node
+        # Special embedding projection for depot node. the depot does not have demand
         self.init_embed_depot = nn.Linear(2, embedding_dim)
         self.init_embed = nn.Linear(node_dim, embedding_dim)
 
@@ -142,8 +147,11 @@ class AttentionModel(nn.Module):
         return log_p.sum(1)
 
     def _init_embed(self, input):
-        # features = ('demand', 'timeWindowStart', 'timeWindowFinish')
-        features = ('demand',)
+        if self.is_vrp:
+            features = ('demand',)
+        elif self.is_vrptw:
+            features = ('demand', 'timeWindowStart', 'timeWindowFinish')
+
         return torch.cat(
             (
                 self.init_embed_depot(input['depot'])[:, None, :],
@@ -255,31 +263,60 @@ class AttentionModel(nn.Module):
         current_node = state.get_current_node()
         batch_size, num_steps, vehicle_count = current_node.size()
 
-        if from_depot:
-            return torch.cat(
-                (
-                    embeddings[:, 0:1, :]
-                    .view(batch_size, num_steps, 1, embeddings.size(-1))
-                    .expand(batch_size, num_steps, vehicle_count, embeddings.size(-1)),
-                    # used capacity is 0 after visiting depot
-                    self.problem.VEHICLE_CAPACITY - torch.zeros_like(state.used_capacity[:, :, :, None])
-                ),
-                -1
-            ).view(batch_size, num_steps, -1)
-        else:
-            return torch.cat(
-                (
-                    torch.gather(
-                        embeddings[:, :, None, :].repeat(1, 1, vehicle_count, 1),
-                        1,
-                        current_node.contiguous()
-                        .view(batch_size, num_steps, vehicle_count, 1)
-                        .repeat(1, 1, 1, embeddings.size(-1))
-                    ).view(batch_size, num_steps, vehicle_count, embeddings.size(-1)),
-                    self.problem.VEHICLE_CAPACITY - state.used_capacity[:, :, :, None]
-                ),
-                -1
-            ).view(batch_size, num_steps, -1)
+        if self.is_vrp:
+            if from_depot:
+                return torch.cat(
+                    (
+                        embeddings[:, 0:1, :]
+                        .view(batch_size, num_steps, 1, embeddings.size(-1))
+                        .expand(batch_size, num_steps, vehicle_count, embeddings.size(-1)),
+                        # used capacity is 0 after visiting depot
+                        self.problem.VEHICLE_CAPACITY - torch.zeros_like(state.used_capacity[:, :, :, None])
+                    ),
+                    -1
+                ).view(batch_size, num_steps, -1)
+            else:
+                return torch.cat(
+                    (
+                        torch.gather(
+                            embeddings[:, :, None, :].repeat(1, 1, vehicle_count, 1),
+                            1,
+                            current_node.contiguous()
+                            .view(batch_size, num_steps, vehicle_count, 1)
+                            .repeat(1, 1, 1, embeddings.size(-1))
+                        ).view(batch_size, num_steps, vehicle_count, embeddings.size(-1)),
+                        self.problem.VEHICLE_CAPACITY - state.used_capacity[:, :, :, None]
+                    ),
+                    -1
+                ).view(batch_size, num_steps, -1)
+        elif self.is_vrptw:
+            if from_depot:
+                return torch.cat(
+                    (
+                        embeddings[:, 0:1, :]
+                        .view(batch_size, num_steps, 1, embeddings.size(-1))
+                        .expand(batch_size, num_steps, vehicle_count, embeddings.size(-1)),
+                        # used capacity is 0 after visiting depot
+                        self.problem.VEHICLE_CAPACITY - torch.zeros_like(state.used_capacity[:, :, :, None]),
+                        torch.zeros_like(state.cur_time[:, None, :, None])
+                    ),
+                    -1
+                ).view(batch_size, num_steps, -1)
+            else:
+                return torch.cat(
+                    (
+                        torch.gather(
+                            embeddings[:, :, None, :].repeat(1, 1, vehicle_count, 1),
+                            1,
+                            current_node.contiguous()
+                            .view(batch_size, num_steps, vehicle_count, 1)
+                            .repeat(1, 1, 1, embeddings.size(-1))
+                        ).view(batch_size, num_steps, vehicle_count, embeddings.size(-1)),
+                        self.problem.VEHICLE_CAPACITY - state.used_capacity[:, :, :, None],
+                        state.cur_time[:, None, :, None]
+                    ),
+                    -1
+                ).view(batch_size, num_steps, -1)
 
     def _one_to_many_logits(self, query, glimpse_K, glimpse_V, logit_K, mask):
 
