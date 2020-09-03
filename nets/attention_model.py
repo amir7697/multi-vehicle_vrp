@@ -286,27 +286,6 @@ class AttentionModel(nn.Module):
         )
         return AttentionModelFixed(embeddings, fixed_context, *fixed_attention_node_data)
 
-    # def _precompute_time(self, time_embeddings, num_steps=1):
-    #     graph_time_embed = time_embeddings.mean(1)
-    #     time_fixed_context = self.project_time_fixed_context(graph_time_embed)[:, None, :]
-    #
-    #     multi_vehicle_embedding = (
-    #         embeddings[:, :, None, :]
-    #             .repeat(1, 1, self.vehicle_count, 1)
-    #             .view(embeddings.shape[0], self.vehicle_count * embeddings.shape[1], embeddings.shape[2])
-    #     )
-    #
-    #     glimpse_key_fixed, glimpse_val_fixed, logit_key_fixed = \
-    #         self.project_time_node_embeddings(time_embeddings[:, None, :, :]).chunk(3, dim=-1)
-    #
-    #     time_fixed_attention_node_data = (
-    #         self._make_heads(glimpse_key_fixed, num_steps),
-    #         self._make_heads(glimpse_val_fixed, num_steps),
-    #         logit_key_fixed.contiguous()
-    #     )
-    #
-    #     return AttentionModelFixed(time_embeddings, time_fixed_context, *time_fixed_attention_node_data)
-
     def _get_log_p(self, fixed, state, normalize=True):
 
         # Compute query = context node embedding
