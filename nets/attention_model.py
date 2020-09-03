@@ -82,7 +82,24 @@ class AttentionModel(nn.Module):
         elif self.is_vrptw:
             node_dim = 5 # x, y, demand, start time, finish time
             # Embedding of last node + remaining_capacity + current time per vehicle
-            step_context_dim = (embedding_dim + 2) * self.vehicle_count
+            step_context_dim = (embedding_dim + 1) * self.vehicle_count
+
+            time_embedding_dim = embedding_dim
+            time_step_context_dim = (time_embedding_dim + 1) * self.vehicle_count
+
+            self.time_init_embed_depot = nn.Linear(2, time_embedding_dim)
+            self.time_init_embed = nn.Linear(2, time_embedding_dim)
+
+            self.project_time_fixed_context = nn.Linear(time_embedding_dim, time_embedding_dim, bias=False)
+            self.project_time_node_embeddings = nn.Linear(time_embedding_dim, 3*time_embedding_dim, bias=False)
+            self.project_time_step_context = nn.Linear(time_step_context_dim, time_embedding_dim, bias=False)
+
+            self.time_embedder = GraphAttentionEncoder(
+                n_heads=n_heads,
+                embed_dim=time_embedding_dim,
+                n_layers=self.n_encode_layers,
+                normalization=normalization
+            )
 
         # Special embedding projection for depot node. the depot does not have demand
         self.init_embed_depot = nn.Linear(2, embedding_dim)
@@ -121,7 +138,11 @@ class AttentionModel(nn.Module):
         else:
             embeddings, _ = self.embedder(self._init_embed(input))
 
-        _log_p, pi = self._inner(input, embeddings)
+        if self.is_vrp:
+            _log_p, pi = self._inner(input, embeddings)
+        elif self.is_vrptw:
+            time_embeddings, _ = self.time_embedder(self._time_init_embed(input))
+            _log_p, pi = self._inner_time_window(input, embeddings, time_embeddings)
 
         cost, mask, distance_cost, early_cost, delay_cost = self.problem.get_costs(
             dataset=input, pi=pi, cost_coefficients=self.cost_coefficients, vehicle_count=self.vehicle_count)
@@ -169,6 +190,16 @@ class AttentionModel(nn.Module):
             1
         )
 
+    def _time_init_embed(self, input):
+        depot_time_window_tensor = torch.cat((input['depotStartTime'], input['depotFinishTime']), 1)
+        return torch.cat(
+            (
+                self.time_init_embed_depot(depot_time_window_tensor)[:, None, :],
+                self.time_init_embed(torch.cat((input['timeWindowStart'][:, :, None],
+                                                input['timeWindowFinish'][:, :, None]), -1))
+            ), 1
+        )
+
     def _inner(self, input, embeddings):
 
         outputs = []
@@ -181,6 +212,27 @@ class AttentionModel(nn.Module):
 
         while not state.all_finished():
             log_p, mask = self._get_log_p(fixed, state)
+            selected = self._select_node(log_p.exp()[:, 0, :], mask[:, 0, :])  # Squeeze out steps dimension
+            state = state.update(selected, self.vehicle_count)
+            outputs.append(log_p[:, 0, :])
+            sequences.append(selected)
+
+        # Collected lists, return Tensor
+        return torch.stack(outputs, 1), torch.stack(sequences, 1)
+
+    def _inner_time_window(self, input, embeddings, time_embeddings):
+        outputs = []
+        sequences = []
+
+        state = self.problem.make_state(input, vehicle_count=self.vehicle_count)
+
+        location_fixed = self._precompute(embeddings)
+        time_fixed = self._precompute(time_embeddings)
+
+        while not state.all_finished():
+            log_p, mask = self._get_log_p_time_window(location_fixed, time_fixed, state)
+
+            # Select the indices of the next nodes in the sequences, result (batch_size) long
             selected = self._select_node(log_p.exp()[:, 0, :], mask[:, 0, :])  # Squeeze out steps dimension
             state = state.update(selected, self.vehicle_count)
             outputs.append(log_p[:, 0, :])
@@ -234,6 +286,27 @@ class AttentionModel(nn.Module):
         )
         return AttentionModelFixed(embeddings, fixed_context, *fixed_attention_node_data)
 
+    # def _precompute_time(self, time_embeddings, num_steps=1):
+    #     graph_time_embed = time_embeddings.mean(1)
+    #     time_fixed_context = self.project_time_fixed_context(graph_time_embed)[:, None, :]
+    #
+    #     multi_vehicle_embedding = (
+    #         embeddings[:, :, None, :]
+    #             .repeat(1, 1, self.vehicle_count, 1)
+    #             .view(embeddings.shape[0], self.vehicle_count * embeddings.shape[1], embeddings.shape[2])
+    #     )
+    #
+    #     glimpse_key_fixed, glimpse_val_fixed, logit_key_fixed = \
+    #         self.project_time_node_embeddings(time_embeddings[:, None, :, :]).chunk(3, dim=-1)
+    #
+    #     time_fixed_attention_node_data = (
+    #         self._make_heads(glimpse_key_fixed, num_steps),
+    #         self._make_heads(glimpse_val_fixed, num_steps),
+    #         logit_key_fixed.contiguous()
+    #     )
+    #
+    #     return AttentionModelFixed(time_embeddings, time_fixed_context, *time_fixed_attention_node_data)
+
     def _get_log_p(self, fixed, state, normalize=True):
 
         # Compute query = context node embedding
@@ -242,6 +315,28 @@ class AttentionModel(nn.Module):
 
         # Compute keys and values for the nodes
         glimpse_K, glimpse_V, logit_K = fixed.glimpse_key, fixed.glimpse_val, fixed.logit_key
+
+        # Compute the mask
+        mask = state.get_mask(self.vehicle_count)
+
+        # Compute logits (unnormalized log_p)
+        log_p, glimpse = self._one_to_many_logits(query, glimpse_K, glimpse_V, logit_K, mask)
+
+        if normalize:
+            log_p = torch.log_softmax(log_p / self.temp, dim=-1)
+
+        assert not torch.isnan(log_p).any()
+
+        return log_p, mask
+
+    def _get_log_p_time_window(self, fixed, time_fixed, state, normalize=True):
+
+        query = fixed.context_node_projected + time_fixed.context_node_projected + \
+                self.project_step_context(self._get_parallel_step_context(fixed.node_embeddings, state)) +\
+                self.project_time_step_context(self._get_parallel_step_context_time_window(time_fixed.node_embeddings,
+                                                                                           state))
+
+        glimpse_K, glimpse_V, logit_K = self._get_attention_node_data_time_window(fixed, time_fixed)
 
         # Compute the mask
         mask = state.get_mask(self.vehicle_count)
@@ -303,8 +398,7 @@ class AttentionModel(nn.Module):
                         .view(batch_size, num_steps, 1, embeddings.size(-1))
                         .expand(batch_size, num_steps, vehicle_count, embeddings.size(-1)),
                         # used capacity is 0 after visiting depot
-                        self.problem.VEHICLE_CAPACITY - torch.zeros_like(state.used_capacity[:, :, :, None]),
-                        torch.zeros_like(state.cur_time[:, None, :, None])
+                        self.problem.VEHICLE_CAPACITY - torch.zeros_like(state.used_capacity[:, :, :, None])
                     ),
                     -1
                 ).view(batch_size, num_steps, -1)
@@ -318,10 +412,38 @@ class AttentionModel(nn.Module):
                             .view(batch_size, num_steps, vehicle_count, 1)
                             .repeat(1, 1, 1, embeddings.size(-1))
                         ).view(batch_size, num_steps, vehicle_count, embeddings.size(-1)),
-                        self.problem.VEHICLE_CAPACITY - state.used_capacity[:, :, :, None],
-                        state.cur_time[:, None, :, None]
+                        self.problem.VEHICLE_CAPACITY - state.used_capacity[:, :, :, None]
                     ),
                     -1
+                ).view(batch_size, num_steps, -1)
+
+    def _get_parallel_step_context_time_window(self, time_embeddings, state, from_depot=False):
+        current_node = state.get_current_node()
+        batch_size, num_steps, vehicle_count = current_node.size()
+
+        if self.is_vrptw:
+            if from_depot:
+                return torch.cat(
+                    (
+                        time_embeddings[:, 0:1, :]
+                        .view(batch_size, num_steps, 1, time_embeddings.size(-1))
+                        .expand(batch_size, num_steps, vehicle_count, time_embeddings.size(-1)),
+                        torch.zeros_like(state.cur_time[:, None, :, None])
+                    ), -1
+                ).view(batch_size, num_steps, -1)
+            else:
+                return torch.cat(
+                    (
+                        torch.gather(
+                            time_embeddings[:, :, None, :].repeat(1, 1, vehicle_count, 1),
+                            1,
+                            current_node.contiguous()
+                            .view(batch_size, num_steps, vehicle_count, 1)
+                            .repeat(1, 1, 1, time_embeddings.size(-1))
+                        )
+                        .view(batch_size, num_steps, vehicle_count, time_embeddings.size(-1)),
+                        state.cur_time[:, None, :, None]
+                    ), -1
                 ).view(batch_size, num_steps, -1)
 
     def _one_to_many_logits(self, query, glimpse_K, glimpse_V, logit_K, mask):
@@ -369,3 +491,11 @@ class AttentionModel(nn.Module):
             .expand(v.size(0), v.size(1) if num_steps is None else num_steps, v.size(2), self.n_heads, -1)
             .permute(3, 0, 1, 2, 4)  # (n_heads, batch_size, num_steps, graph_size, head_dim)
         )
+
+    @staticmethod
+    def _get_attention_node_data_time_window(fixed, time_fixed):
+        K = fixed.glimpse_key + time_fixed.glimpse_key
+        V = fixed.glimpse_val + time_fixed.glimpse_val
+        logit_key = fixed.logit_key + time_fixed.logit_key
+
+        return K, V, logit_key
