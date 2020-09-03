@@ -103,7 +103,8 @@ class CVRPTW(object):
 
         total_cost = cost_coefficients['distance']*distance_cost + cost_coefficients['service']*service_time_cost + \
             cost_coefficients['early']*early_arrival_cost + cost_coefficients['delay']*delay_time_cost
-        return total_cost, None
+        return total_cost, None, cost_coefficients['distance']*distance_cost, \
+            cost_coefficients['early']*early_arrival_cost, cost_coefficients['delay']*delay_time_cost
 
     @staticmethod
     def make_dataset(*args, **kwargs):

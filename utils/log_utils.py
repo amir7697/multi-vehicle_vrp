@@ -1,7 +1,10 @@
-def log_values(cost, grad_norms, epoch, batch_id, step,
+def log_values(cost, grad_norms, epoch, batch_id, step, distance_cost, early_cost, delay_cost,
                log_likelihood, reinforce_loss, bl_loss, tb_logger, opts):
     avg_cost = cost.mean().item()
     grad_norms, grad_norms_clipped = grad_norms
+    avg_distance_cost = distance_cost.mean().item()
+    avg_early_cost = early_cost.mean().item()
+    avg_delay_cost = delay_cost.mean().item()
 
     # Log values to screen
     print('epoch: {}, train_batch_id: {}, avg_cost: {}'.format(epoch, batch_id, avg_cost))
@@ -11,6 +14,9 @@ def log_values(cost, grad_norms, epoch, batch_id, step,
     # Log values to tensorboard
     if not opts.no_tensorboard:
         tb_logger.log_value('avg_cost', avg_cost, step)
+        tb_logger.log_value('avg_distance_cost', avg_distance_cost, step)
+        tb_logger.log_value('avg_early_cost', avg_early_cost, step)
+        tb_logger.log_value('avg_delay_cost', avg_delay_cost, step)
 
         tb_logger.log_value('actor_loss', reinforce_loss.item(), step)
         tb_logger.log_value('nll', -log_likelihood.mean().item(), step)
