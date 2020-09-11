@@ -108,7 +108,7 @@ class AttentionModel(nn.Module):
         if temp is not None:  # Do not change temperature if not provided
             self.temp = temp
 
-    def forward(self, input, return_pi=False, return_cost_detail=False):
+    def forward(self, input, return_pi=False, return_cost_detail=False, return_entropy=False):
         """
         :param input: (batch_size, graph_size, node_dim) input node features or dictionary with multiple tensors
         :param return_pi: whether to return the output sequences, this is optional as it is not compatible with
@@ -123,21 +123,43 @@ class AttentionModel(nn.Module):
 
         _log_p, pi = self._inner(input, embeddings)
 
+        entropy = self._calc_entropy(_log_p)
+
         cost, mask, distance_cost, early_cost, delay_cost = self.problem.get_costs(
             dataset=input, pi=pi, cost_coefficients=self.cost_coefficients, vehicle_count=self.vehicle_count)
         # Log likelyhood is calculated within the model since returning it per action does not work well with
         # DataParallel since sequences can be of different lengths
         ll = self._calc_log_likelihood(_log_p, pi, mask)
-        if return_cost_detail:
-            if return_pi:
-                return cost, ll, pi, distance_cost, early_cost, delay_cost
+        if return_entropy:
+            if return_cost_detail:
+                if return_pi:
+                    return cost, ll, pi, distance_cost, early_cost, delay_cost, entropy
 
-            return cost, ll, distance_cost, early_cost, delay_cost
+                return cost, ll, distance_cost, early_cost, delay_cost, entropy
+            else:
+                if return_pi:
+                    return cost, ll, pi, entropy
+
+                return cost, ll, entropy
         else:
-            if return_pi:
-                return cost, ll, pi
+            if return_cost_detail:
+                if return_pi:
+                    return cost, ll, pi, distance_cost, early_cost, delay_cost
 
-            return cost, ll
+                return cost, ll, distance_cost, early_cost, delay_cost
+            else:
+                if return_pi:
+                    return cost, ll, pi
+
+                return cost, ll
+
+    def _calc_entropy(self, _log_p):
+        # replace -inf with a very small value
+        _log_p_temp = _log_p + 0
+        _log_p_temp[_log_p_temp == -float('Inf')] = -100000
+        _p = torch.exp(_log_p)
+
+        return (-1*_p*_log_p_temp).sum(dim=-1).mean(dim=-1)
 
     def _calc_log_likelihood(self, _log_p, a, mask):
         # Get log_p corresponding to selected actions

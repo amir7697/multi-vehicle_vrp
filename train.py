@@ -137,14 +137,20 @@ def train_batch(
     bl_val = move_to(bl_val, opts.device) if bl_val is not None else None
 
     # Evaluate model, get costs and log probabilities
-    cost, log_likelihood, distance_cost, early_cost, delay_cost = model(x, return_pi=False, return_cost_detail=True)
+    ENTROPY_COEFF = 50
+    cost, log_likelihood, distance_cost, early_cost, delay_cost, entropy = model(x, return_pi=False,
+                                                                                 return_cost_detail=True,
+                                                                                 return_entropy=True)
 
     # Evaluate baseline, get baseline loss if any (only for critic)
     bl_val, bl_loss = baseline.eval(x, cost) if bl_val is None else (bl_val, 0)
 
     # Calculate loss
     reinforce_loss = ((cost - bl_val) * log_likelihood).mean()
-    loss = reinforce_loss + bl_loss
+    # Calculate Entropy loss
+    entropy_loss = ENTROPY_COEFF*(entropy.mean())
+
+    loss = reinforce_loss + bl_loss + entropy_loss
 
     # Perform backward pass and optimization step
     optimizer.zero_grad()
@@ -156,4 +162,4 @@ def train_batch(
     # Logging
     if step % int(opts.log_step) == 0:
         log_values(cost, grad_norms, epoch, batch_id, step, distance_cost, early_cost, delay_cost,
-                   log_likelihood, reinforce_loss, bl_loss, tb_logger, opts)
+                   log_likelihood, entropy_loss, reinforce_loss, bl_loss, tb_logger, opts)

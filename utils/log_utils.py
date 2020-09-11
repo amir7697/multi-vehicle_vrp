@@ -1,5 +1,5 @@
 def log_values(cost, grad_norms, epoch, batch_id, step, distance_cost, early_cost, delay_cost,
-               log_likelihood, reinforce_loss, bl_loss, tb_logger, opts):
+               log_likelihood, entropy_loss, reinforce_loss, bl_loss, tb_logger, opts):
     avg_cost = cost.mean().item()
     grad_norms, grad_norms_clipped = grad_norms
     avg_distance_cost = distance_cost.mean().item()
@@ -17,6 +17,7 @@ def log_values(cost, grad_norms, epoch, batch_id, step, distance_cost, early_cos
         tb_logger.log_value('avg_distance_cost', avg_distance_cost, step)
         tb_logger.log_value('avg_early_cost', avg_early_cost, step)
         tb_logger.log_value('avg_delay_cost', avg_delay_cost, step)
+        tb_logger.log_value('entropy_cost', entropy_loss, step)
 
         tb_logger.log_value('actor_loss', reinforce_loss.item(), step)
         tb_logger.log_value('nll', -log_likelihood.mean().item(), step)
