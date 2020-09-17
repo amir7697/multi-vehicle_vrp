@@ -137,7 +137,7 @@ def train_batch(
     bl_val = move_to(bl_val, opts.device) if bl_val is not None else None
 
     # Evaluate model, get costs and log probabilities
-    ENTROPY_COEFF = 50
+    ENTROPY_COEFF = 100
     cost, log_likelihood, distance_cost, early_cost, delay_cost, entropy = model(x, return_pi=False,
                                                                                  return_cost_detail=True,
                                                                                  return_entropy=True)
