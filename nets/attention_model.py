@@ -43,6 +43,8 @@ class AttentionModel(nn.Module):
                  embedding_dim,
                  hidden_dim,
                  problem,
+                 graph_size,
+                 distance_embedding,
                  cost_coefficients,
                  vehicle_count=1,
                  n_encode_layers=2,
@@ -74,18 +76,29 @@ class AttentionModel(nn.Module):
         self.checkpoint_encoder = checkpoint_encoder
         self.shrink_size = shrink_size
         self.vehicle_count = vehicle_count
+        self.distance_embedding = distance_embedding
 
         if self.is_vrp:
-            node_dim = 3 # x, y, demand
+            if self.distance_embedding:
+                node_dim_depot = graph_size # distance to each node
+                node_dim = graph_size + 1 # distance to each node, demand
+            else:
+                node_dim_depot = 2 # x, y
+                node_dim = 3 # x, y, demand
             # Embedding of last node + remaining_capacity  per vehicle
             step_context_dim = (embedding_dim + 1) * self.vehicle_count
         elif self.is_vrptw:
-            node_dim = 5 # x, y, demand, start time, finish time
+            if self.distance_embedding:
+                node_dim_depot = graph_size # distance to each node
+                node_dim = graph_size + 3 # distance to each node, demand, start time, finish time
+            else:
+                node_dim_depot = 2 # x, y
+                node_dim = 5 # x, y, demand, start time, finish time
             # Embedding of last node + remaining_capacity + current time per vehicle
             step_context_dim = (embedding_dim + 2) * self.vehicle_count
 
         # Special embedding projection for depot node. the depot does not have demand
-        self.init_embed_depot = nn.Linear(2, embedding_dim)
+        self.init_embed_depot = nn.Linear(node_dim_depot, embedding_dim)
         self.init_embed = nn.Linear(node_dim, embedding_dim)
 
         self.embedder = GraphAttentionEncoder(
@@ -158,16 +171,30 @@ class AttentionModel(nn.Module):
         elif self.is_vrptw:
             features = ('demand', 'timeWindowStart', 'timeWindowFinish')
 
-        return torch.cat(
-            (
-                self.init_embed_depot(input['depot'])[:, None, :],
-                self.init_embed(torch.cat((
-                    input['loc'],
-                    *(input[feat][:, :, None] for feat in features)
-                ), -1))
-            ),
-            1
-        )
+        if self.distance_embedding:
+            distance_to_depot = self._calculate_distance_to_depot(input['depot'], input['loc'])
+            distance_matrix = self._calculate_distance_matrix(input['loc'])
+
+            return torch.cat(
+                (
+                    self.init_embed_depot(distance_to_depot)[:, None, :],
+                    self.init_embed(torch.cat((
+                        distance_matrix,
+                        *(input[feat][:, :, None] for feat in features)
+                    ), -1))
+                ), 1
+            )
+        else:
+            return torch.cat(
+                (
+                    self.init_embed_depot(input['depot'])[:, None, :],
+                    self.init_embed(torch.cat((
+                        input['loc'],
+                        *(input[feat][:, :, None] for feat in features)
+                    ), -1))
+                ),
+                1
+            )
 
     def _inner(self, input, embeddings):
 
@@ -369,3 +396,15 @@ class AttentionModel(nn.Module):
             .expand(v.size(0), v.size(1) if num_steps is None else num_steps, v.size(2), self.n_heads, -1)
             .permute(3, 0, 1, 2, 4)  # (n_heads, batch_size, num_steps, graph_size, head_dim)
         )
+
+    @staticmethod
+    def _calculate_distance_matrix(locations):
+        first_location_tensor = locations.unsqueeze(dim=-2).repeat(1, 1, locations.size(1), 1)
+        second_location_tensor = locations.unsqueeze(dim=-3).repeat(1, locations.size(1), 1, 1)
+
+        return (second_location_tensor - first_location_tensor).norm(p=2, dim=-1)
+
+    @staticmethod
+    def _calculate_distance_to_depot(depot_location, node_locations):
+        depot_location_extended = depot_location.unsqueeze(1).repeat(1, node_locations.size(1), 1)
+        return (node_locations - depot_location_extended).norm(p=2, dim=-1)

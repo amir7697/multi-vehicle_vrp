@@ -54,6 +54,8 @@ def run(opts):
         opts.embedding_dim,
         opts.hidden_dim,
         problem,
+        graph_size=opts.graph_size,
+        distance_embedding=opts.distance_embedding,
         cost_coefficients=opts.cost_coefficients,
         vehicle_count=opts.vehicle_count,
         n_encode_layers=opts.n_encode_layers,

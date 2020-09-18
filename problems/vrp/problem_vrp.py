@@ -63,7 +63,8 @@ class CVRP(object):
                          ).sum(dim=-1)
 
         # Length is distance (L2-norm of difference) of each next location to its prev and of first and last to depot
-        return cost_coefficients['distance']*distance_cost, None, cost_coefficients['distance']*distance_cost, 0, 0
+        return cost_coefficients['distance']*distance_cost, None, cost_coefficients['distance']*distance_cost, \
+            0*distance_cost, 0*distance_cost
 
     @staticmethod
     def make_dataset(*args, **kwargs):

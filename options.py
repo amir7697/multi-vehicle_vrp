@@ -20,6 +20,8 @@ def get_options(args=None):
 
     # Model
     parser.add_argument('--embedding_dim', type=int, default=128, help='Dimension of input embedding')
+    parser.add_argument('--distance_embedding', action='store_true',
+                        help='Using distance matrix for initial embedding instead of location embedding')
     parser.add_argument('--hidden_dim', type=int, default=128, help='Dimension of hidden layers in Enc/Dec')
     parser.add_argument('--n_encode_layers', type=int, default=3, help='Number of layers in the encoder/critic network')
     parser.add_argument('--tanh_clipping', type=float, default=10.,
