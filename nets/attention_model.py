@@ -3,6 +3,7 @@ from torch import nn
 from torch.utils.checkpoint import checkpoint
 import math
 from typing import NamedTuple
+import torch.nn.functional as F
 
 from nets.graph_encoder import GraphAttentionEncoder
 from torch.nn import DataParallel
@@ -101,6 +102,8 @@ class AttentionModel(nn.Module):
         self.init_embed_depot = nn.Linear(node_dim_depot, embedding_dim)
         self.init_embed = nn.Linear(node_dim, embedding_dim)
 
+        self.second_layer_embedding = nn.Linear(embedding_dim, embedding_dim)
+
         self.embedder = GraphAttentionEncoder(
             n_heads=n_heads,
             embed_dim=embedding_dim,
@@ -175,25 +178,31 @@ class AttentionModel(nn.Module):
             distance_to_depot = self._calculate_distance_to_depot(input['depot'], input['loc'])
             distance_matrix = self._calculate_distance_matrix(input['loc'])
 
-            return torch.cat(
-                (
-                    self.init_embed_depot(distance_to_depot)[:, None, :],
-                    self.init_embed(torch.cat((
-                        distance_matrix,
-                        *(input[feat][:, :, None] for feat in features)
-                    ), -1))
-                ), 1
+            return self.second_layer_embedding(
+                F.relu(
+                    torch.cat(
+                        (
+                            self.init_embed_depot(distance_to_depot)[:, None, :],
+                            self.init_embed(torch.cat((
+                                distance_matrix,
+                                *(input[feat][:, :, None] for feat in features)
+                            ), -1))
+                        ), 1
+                    )
+                )
             )
         else:
-            return torch.cat(
-                (
-                    self.init_embed_depot(input['depot'])[:, None, :],
-                    self.init_embed(torch.cat((
-                        input['loc'],
-                        *(input[feat][:, :, None] for feat in features)
-                    ), -1))
-                ),
-                1
+            return self.second_layer_embedding(
+                    F.relu(
+                        torch.cat(
+                            (
+                                self.init_embed_depot(input['depot'])[:, None, :],
+                                self.init_embed(torch.cat((
+                                    input['loc'],
+                                    *(input[feat][:, :, None] for feat in features)), -1))
+                            ), 1
+                        )
+                    )
             )
 
     def _inner(self, input, embeddings):
